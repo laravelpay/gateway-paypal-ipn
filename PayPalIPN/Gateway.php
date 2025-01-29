@@ -67,7 +67,7 @@ class Gateway extends GatewayFoundation
         echo '<body onload="document.redirectform.submit()" style="display: none">
             <form action="'. $url .'" method="post" name="redirectform">
                 <input type="hidden" name="cmd" value="_xclick">
-                <input type="hidden" name="business" value="'. $gateway->config('mode', 'production') .'">
+                <input type="hidden" name="business" value="'. $gateway->config('email') .'">
                 <input type="hidden" name="item_name" value="'.$payment->description.'">
                 <input type="hidden" name="item_number" value="'.$payment->id.'">
                 <input type="hidden" name="amount" value="'.$payment->total().'">
