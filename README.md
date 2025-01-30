@@ -12,5 +12,5 @@ php artisan gateway:install laravelpay/gateway-paypal-ipn
 
 ## Setup
 ```
-php artisan gateway:install paypal-ipn
+php artisan gateway:setup paypal-ipn
 ```
