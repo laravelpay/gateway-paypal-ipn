@@ -3,7 +3,7 @@
 namespace App\Gateways\PayPalIPN;
 
 use Illuminate\Http\Request;
-use LaraPay\Framework\Foundation\Interfaces\GatewayFoundation;
+use LaraPay\Framework\Interfaces\GatewayFoundation;
 
 class Gateway extends GatewayFoundation
 {
