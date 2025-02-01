@@ -49,33 +49,42 @@ class Gateway extends GatewayFoundation
 
     public function pay($payment)
     {
-        $gateway = $payment->gateway;
+        $url = $this->getPayPalUrl($payment->gateway->config('mode', 'production'));
 
-        $url = $this->getPayPalUrl($gateway->config('mode', 'production'));
+        $checkoutUrl = url()->query($url, [
+            'cmd' => '_xclick',
+            'business' => $payment->gateway->config('email'),
+            'item_name' => $payment->description,
+            'item_number' => $payment->id,
+            'amount' => $payment->total(),
+            'currency_code' => $payment->currency,
+            'cancel_return' => $payment->cancelUrl(),
+            'notify_url' => $payment->webhookUrl(),
+            'return' => $payment->callbackUrl(),
+            'rm' => 2,
+            'charset' => 'uft-8',
+            'no_note' => 1,
+        ]);
 
-        echo '<body onload="document.redirectform.submit()" style="display: none">
-            <form action="'. $url .'" method="post" name="redirectform">
-                <input type="hidden" name="cmd" value="_xclick">
-                <input type="hidden" name="business" value="'. $gateway->config('email') .'">
-                <input type="hidden" name="item_name" value="'.$payment->description.'">
-                <input type="hidden" name="item_number" value="'.$payment->id.'">
-                <input type="hidden" name="amount" value="'.$payment->total().'">
-                <input type="hidden" name="currency_code" value="'.$payment->currency.'">
-                <input name="cancel_return" value="'. $payment->cancelUrl() .'">
-                <input name="notify_url" value="'. $payment->webhookUrl() .'">
-                <input name="return" value="'. $payment->successUrl() .'">
-                <input name="rm" value="2">
-                <input name="charset" value="utf-8">
-                <input name="no_note" value="1">
-              </form>
-        </body>';
+        return redirect($checkoutUrl);
     }
 
     public function callback(Request $request)
     {
-        $payment = Payment::find($request->input('payment_id'));
+        $payment = Payment::where('token', $request->input('payment_token'))->first();
 
-        if (!$payment || $payment->gateway->identifier !== $this->identifier) {
+        if (!$payment) {
+            throw new Exception("Payment not found");
+        }
+
+        return redirect($payment->successUrl());
+    }
+
+    public function webhook(Request $request)
+    {
+        $payment = Payment::where('token', $request->input('payment_token'))->first();
+
+        if (!$payment) {
             throw new Exception("Payment not found");
         }
 
