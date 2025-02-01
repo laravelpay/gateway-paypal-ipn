@@ -3,6 +3,7 @@
 namespace App\Gateways\PayPalIPN;
 
 use LaraPay\Framework\Interfaces\GatewayFoundation;
+use Illuminate\Support\Facades\Http;
 use LaraPay\Framework\Payment;
 use Illuminate\Http\Request;
 use Exception;
@@ -60,24 +61,13 @@ class Gateway extends GatewayFoundation
             'currency_code' => $payment->currency,
             'cancel_return' => $payment->cancelUrl(),
             'notify_url' => $payment->webhookUrl(),
-            'return' => $payment->callbackUrl(),
+            'return' => $payment->successUrl(),
             'rm' => 2,
             'charset' => 'uft-8',
             'no_note' => 1,
         ]);
 
         return redirect($checkoutUrl);
-    }
-
-    public function callback(Request $request)
-    {
-        $payment = Payment::where('token', $request->input('payment_token'))->first();
-
-        if (!$payment) {
-            throw new Exception("Payment not found");
-        }
-
-        return redirect($payment->successUrl());
     }
 
     public function webhook(Request $request)
@@ -91,70 +81,79 @@ class Gateway extends GatewayFoundation
         $gateway = $payment->gateway;
 
         // The IPN request is a POST request, so we'll get the data from the request input
-        $ipnPayload = $request->all();
+        $ipnPayload = $request->post();
 
         // Before processing the IPN message, you should validate it to make sure it's actually from PayPal
-        $ipnCheck = $this->validateIpn($ipnPayload, $gateway);
+        $this->validateIpn($ipnPayload, $gateway);
 
-        if ($ipnCheck) {
-            // Process IPN message
-            $paymentStatus = $ipnPayload['payment_status'];
+        // Perform some validation checks
+        $this->validationChecks($ipnPayload, $payment);
 
-            if ($paymentStatus == 'Completed') {
-                // compare the payment amount sent with the amount from the database
-                if ($ipnPayload['mc_gross'] != $payment->total()) {
-                    // The payment amount doesn't match the amount from the database
-                    throw new Exception("The payment {$payment->id} amount doesn't match the amount from the database. Given amount: {$ipnPayload['mc_gross']}");
-                }
-
-                // check if the receiver email is the same as the one in the database
-                if ($ipnPayload['receiver_email'] !== $gateway->config('email')) {
-                    // The receiver email doesn't match the email from the database
-                    throw new Exception("The receiver email doesn't match the email from the gateway config");
-                }
-
-                // check if the currency is the same as the one in the database
-                if ($ipnPayload['mc_currency'] !== $payment->currency) {
-                    // The currency doesn't match the currency from the database
-                    throw new Exception("The currency doesn't match the currency from the database, Given currency: {$ipnPayload['mc_currency']}");
-                }
-
-                // check if the transaction is already processed
-                if (Payment::where('transaction_id', $ipnPayload['txn_id'])->exists()) {
-                    // The transaction is already processed
-                    throw new Exception("The transaction {$ipnPayload['txn_id']} is already processed");
-                }
-
-                // Your code to handle successful payment
-                $payment->completed($ipnPayload['txn_id'], $ipnPayload);
-            } else {
-                // handle code for other payment statuses
-            }
-        }
+        $payment->completed($ipnPayload['txn_id'], $ipnPayload);
     }
 
     private function validateIpn($ipnPayload, $gateway)
     {
         $paypalUrl = $this->getPayPalUrl($gateway->config('mode', 'production'));
 
-        $payload = 'cmd=_notify-validate';
+        // Build a form-data array, prepending cmd=_notify-validate
+        $postData = array_merge(['cmd' => '_notify-validate'], $ipnPayload);
 
-        foreach ($ipnPayload as $key => $value) {
-            $value = urlencode($value);
-            $payload .= "&$key=$value";
+        // Make the request as application/x-www-form-urlencoded
+        $response = Http::asForm()
+            ->post($paypalUrl, $postData);
+
+        // Compare to see if it is 'VERIFIED'
+        if($response->body() !== 'VERIFIED') {
+            throw new \Exception('IPN is not valid');
         }
 
-        // Use CURL to post back the data for validation
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $paypalUrl);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HEADER, false);
-        $result = curl_exec($ch);
-        curl_close($ch);
+        return true;
+    }
 
-        return strcmp($result, 'VERIFIED') == 0;
+    private function validationChecks($ipnPayload, $payment)
+    {
+        // check if the payment status is completed
+        if ($ipnPayload['payment_status'] !== 'Completed') {
+            // The payment status is not completed
+            throw new Exception("The payment status is not completed");
+        }
+
+        // check if the payment is not already paid
+        if ($payment->isPaid()) {
+            // The payment is already paid
+            throw new Exception("The payment {$payment->id} is already paid");
+        }
+
+        // compare the payment amount sent with the amount from the database
+        if ($ipnPayload['mc_gross'] != $payment->total()) {
+            // The payment amount doesn't match the amount from the database
+            throw new Exception("The payment {$payment->id} amount doesn't match the amount from the database. Given amount: {$ipnPayload['mc_gross']}");
+        }
+
+        // check if the receiver email is the same as the one in the database
+        if ($ipnPayload['receiver_email'] != $payment->gateway->config('email')) {
+            // The receiver email doesn't match the email from the database
+            throw new Exception("The receiver email doesn't match the email from the gateway config");
+        }
+
+        // check if the item_number is the same as the one in the database
+        if ($ipnPayload['item_number'] != $payment->id) {
+            // The item_number doesn't match the item_number from the database
+            throw new Exception("The item_number doesn't match the item_number from the database, Given item_number: {$ipnPayload['item_number']}");
+        }
+
+        // check if the currency is the same as the one in the database
+        if ($ipnPayload['mc_currency'] != $payment->currency) {
+            // The currency doesn't match the currency from the database
+            throw new Exception("The currency doesn't match the currency from the database, Given currency: {$ipnPayload['mc_currency']}");
+        }
+
+        // check if the transaction is already processed
+        if (Payment::where('transaction_id', $ipnPayload['txn_id'])->exists()) {
+            // The transaction is already processed
+            throw new Exception("The transaction {$ipnPayload['txn_id']} is already processed");
+        }
     }
 
     private function getPayPalUrl(string $environment = 'production')
